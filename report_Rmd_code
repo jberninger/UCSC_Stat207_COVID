@@ -48,8 +48,9 @@ ca_base <- ggplot(data = cali, mapping = aes(x = long, y = lat, group = group)) 
   geom_polygon(color = "black", fill = "gray")
 
 ca_base + 
-      geom_polygon(data = ca_county, aes(fill =100*death.rate), color = "white") +
+      geom_polygon(data = ca_county, aes(fill =ordered(round(100*death.rate, 2))), color = "white") +
       geom_polygon(color = "black", fill = NA) +
+      ggtitle("Death Rates by County") +
       theme_bw() +
       labs(fill = "Deaths / Infected (%)") +
       ditch_the_axes
@@ -65,6 +66,16 @@ ggplot(data = covid1[2:58,], aes(x=infected, y=deaths, color=population)) + geom
   geom_smooth(method="lm") + ggtitle("Los Angeles Removed")
 ``` 
 
+```{r}
+ggplot(data = covid1, aes(x = 100*deaths/total_cases, fill = county)) + geom_histogram() + 
+  labs(x="Deaths / Total Cases (%)")
+```
+
+```{r}
+ggplot(data = covid1, aes(x = total_cases, fill = county)) + geom_histogram() + 
+  labs(x="Total Cases by County")
+```
+
 
 ```{r}
 # posterior sampling
@@ -75,6 +86,8 @@ post.theta <- rbeta(n = n, shape1 = sum(covid$deaths) + 0.5,
                     shape2 = sum(covid$total_cases) - sum(covid$deaths) + 0.5)
 
 hist(post.theta)
+mean(post.theta)
+sd(post.theta)
 plot(density(post.theta), main = "Model 1 : Theta Posterior Distribution", col = "blue") # make pretty
 
 est.posterior.deaths <- matrix(NA, nrow = nrow(covid), ncol = n)
@@ -82,7 +95,7 @@ row.names(est.posterior.deaths) <- covid$county
 
 for(i in 1:nrow(covid)){
   for(j in 1:n){
-    est.posterior.deaths[i,j] = ceiling(covid2$n[i] * post.theta[j])
+    est.posterior.deaths[i,j] = ceiling(0.20*covid1$population[i] * post.theta[j])
   }
 }
 
@@ -105,7 +118,19 @@ est.posterior.deaths %>% apply(MARGIN = 1, FUN = quantile, probs = c(0.10, 0.25,
 #boxplot(est.posterior.deaths[1,], est.posterior.deaths[2,], horizontal = TRUE, main = "Posterior Deaths", 
 #        names = c("LA", "SD"), col = c("blue", "darkblue"))
 # including LA fucks up the scale
-boxplot(est.posterior.deaths[2,], est.posterior.deaths[3,], est.posterior.deaths[4,], horizontal = TRUE, main = "Posterior Deaths", names = c("SD", "Riverside", "Santa Clara"), col = c("blue", "darkblue", "red"))
+par(mfrow = c(1,2))
+boxplot(est.posterior.deaths[1,], est.posterior.deaths[2,], est.posterior.deaths[3,], 
+        est.posterior.deaths[4,], est.posterior.deaths[7,], est.posterior.deaths[15,], 
+        main = "Model 1: Est. Posterior Deaths", horizontal = TRUE, las = 2,
+        names = c("LA", "SD", "R.side", "S.Clara", "SF", "SB"), 
+        col = c("blue", "darkblue", "brown", "red", "gold", "lightblue"))
+
+boxplot(est.posterior.deaths[26,], est.posterior.deaths[10,], est.posterior.deaths[8,], 
+        est.posterior.deaths[5,], est.posterior.deaths[9,], 
+        horizontal = TRUE, las = 2,
+        main = "Model 1: Est. Posterior Deaths", 
+        names = c("SCZ", "S.Mateo", "Ala", "OC", "Sac"), 
+        col = c("green", "lightblue", "pink", "orange", "purple"))
 ```
 
 
@@ -203,12 +228,21 @@ library(boot)
 a <- inv.logit(theta3[,1])
 b <- log(theta3[,2])
 
+post.deaths.3.2 <- matrix(NA, nrow=nrow(covid2), ncol = nrow(theta3))
+rownames(post.deaths.3) <- covid$county
+
+for(i in 1:nrow(post.deaths.3)){
+  for(j in 1:ncol(post.deaths.3)){
+    post.deaths.3.2[i,j] <- ceiling(0.20*covid1$population[i]*(a[j]*b[j])/((1-a[j])*b[j]))
+  }
+}
+
 post.deaths.3 <- matrix(NA, nrow=nrow(covid2), ncol = nrow(theta3))
 rownames(post.deaths.3) <- covid$county
 
 for(i in 1:nrow(post.deaths.3)){
   for(j in 1:ncol(post.deaths.3)){
-    post.deaths.3[i,j] <- floor(covid2$n[i]*(a[j]/(a[j]+b[j])))
+    post.deaths.3.2[i,j] <- ceiling(0.20*covid1$population[i]*(a[j])/(a[j]+b[j]))
   }
 }
 
@@ -216,6 +250,9 @@ plot(density(a/(a+b)), main = "Model 2 : Posterior Distribution mu/(mu+tau)",
      col = "red") # this is the distribution of "theta"
 
 post.theta.3 <- a/(a+b)
+post.theta.3.2 <- (a*b)/((1-a)*b)
+mean(post.theta.3)
+quantile(post.theta.3, probs = c(0.025,0.975))
 
 apply(post.deaths.3, MARGIN = 1, FUN = quantile, probs = c(0.1,0.25,0.5,0.75,0.9)) %>% t()
 covid2$n[1]*(a/(a+b)) %>% mean() # expected value
@@ -319,7 +356,7 @@ d_max4 <- betabinT(theta = fit5$par, data = dataparams4) # this is the value of 
 
 tpar4=list(m=fit5$par,var=2*solve(-1*fit5$hessian), df=4) 
 # convert the hessian to a covariance, stack overflow says covar is asymptotically -hessian^-1
-
+lf <- c()
 rejectsampling=function(logf,tpar,dmax,n,data){
      theta=rmt(n,mean=c(tpar$m),S=tpar$var,df=tpar$df)
      for(i in 1:n){
@@ -333,7 +370,8 @@ rejectsampling=function(logf,tpar,dmax,n,data){
 n <- 10000
 
 theta4 <- rejectsampling(betabinexch5, tpar4, dmax = d_max4, n, covid2)
-mycontour(betabinexch5,c(-4,-3,3,8), covid2, main = "Model 3 : Parameter Rejection Sampling")# change these values as well add axes labels
+mycontour(betabinexch5,c(-4,-3,3,8), covid2, main = "Model 3 : Parameter Rejection Sampling", xlab = "logit(mu)", 
+          ylab = "exp(tau)")# change these values as well add axes labels
 points(theta4[,1],theta4[,2])
 # centered much more
 # very good
@@ -346,15 +384,17 @@ tau.4 <- log(theta4[,2])
 
 for(i in 1:nrow(covid2)){
   for(j in 1:length(tau.4)){
-    post.theta.4[i,j] <- rbeta(n = 1, shape1 = inv.logit(theta4[j,1])*log(theta4[j,2]) + covid2$y[i] - 1,
-                               shape2 = log(theta4[j,2])*(1-inv.logit(theta4[j,1])) + covid2$n[i] - covid2$y[i] - 1)
+    post.theta.4[i,j] <- rbeta(n = 1, shape1 = inv.logit(theta4[j,1])*log(theta4[j,2]) + covid2$y[i],
+                               shape2 = log(theta4[j,2])*(1-inv.logit(theta4[j,1])) + covid2$n[i] - covid2$y[i])
   }
 }
 
+
+post.theta.4.2 <- matrix(NA, nrow = nrow(covid2), ncol = nrow(theta4))
 for(i in 1:nrow(covid2)){
   for(j in 1:length(tau.4)){
-    post.theta.4[i,j] <- rbeta(n = 1, shape1 = mu.4[j]*tau.4[j] + covid2$y[i] - 1,
-                               shape2 = tau.4[j]*(1-mu.4[j]) + covid2$n[i] - covid2$y[i] - 1)
+    post.theta.4.2[i,j] <- rbeta(n = 1, shape1 = mu.4[j]*tau.4[j] + covid2$y[i],
+                               shape2 = tau.4[j]*(1-mu.4[j]) + covid2$n[i] - covid2$y[i])
   }
 }
 post.theta.4[is.nan(post.theta.4)] <- 0
@@ -365,13 +405,13 @@ rownames(post.theta.4.dist) <- covid1$county
 
 post.theta.4 <- rbeta(n=nrow(theta4),shape1=inv.logit(theta4[,1])*exp(theta4[,2]), 
                       shape2 = exp(theta4[,2])*(1-exp(theta4[,1])))
-plot(density(post.theta.4), main = "Model 3 : Theta Posterior Distribution", col = "orange") # this density plot is important
+plot(density(post.theta.4.2), main = "Model 3 : Theta Posterior Distribution", col = "orange") # this density plot is important
 
 post.deaths.4 <- matrix(NA, nrow = nrow(covid2), ncol = length(post.theta.4))
 
 for(i in 1:nrow(covid2)){
   for(j in 1:ncol(post.deaths.4)){
-    post.deaths.4[i,j] <- rbinom(n=1, size=covid2$n[i], prob=post.theta.4[j])
+    post.deaths.4[i,j] <- rbinom(n=1, size=ceiling(0.20*covid1$population[i]), prob=post.theta.4[j])
   }
 }
 rownames(post.deaths.4) <- covid$county
@@ -415,11 +455,208 @@ for(i in 1:nrow(est.dead.2)){
 
 par(mfrow = c(3,1))
 plot(density(apply(est.dead.2, MARGIN = 2, FUN = sum)), main = "Model 1 : Deaths from 20% Infected", col = "blue")
-abline(v = 20000, col = "pink")
+abline(v = 200000, col = "pink")
 plot(density(apply(est.dead.3, MARGIN = 2, FUN = sum)), main = "Model 2 : Deaths from 20% Infected", col = "red")
-abline(v = 20000, col = "pink")
+abline(v = 200000, col = "pink")
 plot(density(apply(est.dead.4, MARGIN = 2, FUN = sum)), main = "Model 3 : Deaths from 20% Infected", col = "orange")
-abline(v = 20000, col = "pink")
+abline(v = 200000, col = "pink")
+
+```
+
+
+```{r}
+bayes.influence=function(theta,data){
+y=data[,1]; n=data[,2]
+N=length(y)
+summary=quantile(theta[,2],c(.05,.5,.95))
+summary.obs=array(0,c(N,3))
+K=exp(theta[,2])
+eta=exp(theta[,1])/(1+exp(theta[,1]))
+m=length(K)
+  for (i in 1:N){
+  weight=exp(lbeta(K*eta,K*(1-eta))-lbeta(K*eta+y[i],K*(1-eta)+n[i]-y[i]))
+  probs=weight/sum(weight)
+  indices=sample(1:m,size=m,prob=probs,replace=TRUE)
+  theta.s=theta[indices,]
+  summary.obs[i,]=quantile(theta.s[,2],c(.05,.5,.95))
+}
+return(list(summary=summary,summary.obs=summary.obs))
+}
+
+
+bayes.influence2=function(theta,data){
+y=data[,1]; n=data[,2]
+N=length(y)
+summary=quantile(theta[,2],c(.05,.5,.95))
+summary.obs=array(0,c(N,3))
+K=theta[,2]
+eta=theta[,1]
+m=length(K)
+  for (i in 1:N){
+  weight=exp(lbeta(K*eta,K*(1-eta))-lbeta(K*eta+y[i],K*(1-eta)+n[i]-y[i]))
+  probs=weight/sum(weight)
+  indices=sample(1:m,size=m,prob=probs,replace=TRUE)
+  theta.s=theta[indices,]
+  summary.obs[i,]=quantile(theta.s[,2],c(.05,.5,.95))
+}
+return(list(summary=summary,summary.obs=summary.obs))
+}
+
+```
+
+```{r}
+j1 <- round(inv.logit(theta3[,1]),4)
+j2 <- round(exp(theta3[,2]),4)
+jj <- cbind(j1,j2)
+
+```
+
+```{r}
+par(mfrow = c(1,2))
+boxplot(post.deaths.3[1,], post.deaths.3[2,], post.deaths.3[3,], 
+        post.deaths.3[4,], post.deaths.3[7,], post.deaths.3[15,], 
+        main = "Model 2: Est. Posterior Deaths", horizontal = TRUE, las = 2,
+        names = c("LA", "SD", "R.side", "S.Clara", "SF", "SB"), 
+        col = c("blue", "darkblue", "brown", "red", "gold", "lightblue"))
+
+boxplot(post.deaths.3[26,], post.deaths.3[10,], post.deaths.3[8,], 
+        post.deaths.3[5,], post.deaths.3[9,], 
+        horizontal = TRUE, las = 2,
+        main = "Model 2: Est. Posterior Deaths", 
+        names = c("SCZ", "S.Mateo", "Ala", "OC", "Sac"), 
+        col = c("green", "lightblue", "pink", "orange", "purple"))
+```
+
+```{r}
+par(mfrow = c(2,2))
+boxplot(post.deaths.4[1,], post.deaths.4[2,], post.deaths.4[3,], 
+        post.deaths.4[4,], post.deaths.4[5,], post.deaths.4[6,], 
+        main = "Model 3: Est. Posterior Deaths", horizontal = TRUE, las = 2,
+        names = c("LA", "SD", "R.side", "S.Clara", "Orange", "S.Bern"), 
+        col = c("blue", "darkblue", "brown", "red", "gold", "lightblue"))
+
+boxplot(post.deaths.4[7,], post.deaths.4[8,], post.deaths.4[9,], 
+        post.deaths.4[10,], post.deaths.4[11,], post.deaths.4[12,], 
+        horizontal = TRUE, las = 2,
+        main = "Model 3: Est. Posterior Deaths", 
+        names = c("SF", "Ala", "Sac", "S.Mateo", "C.Costa", "Kern"), 
+        col = c("blue", "darkblue", "brown", "red", "gold", "lightblue"))
+
+boxplot(post.deaths.4[13,], post.deaths.4[14,], post.deaths.4[15,], 
+        post.deaths.4[16,], post.deaths.4[17,], post.deaths.4[18,], 
+        horizontal = TRUE, las = 2,
+        main = "Model 3: Est. Posterior Deaths", 
+        names = c("Ventura", "S.Joaq", "SB", "Tulare", "Fresno", "Marin"), 
+        col = c("blue", "darkblue", "brown", "red", "gold", "lightblue"))
+
+boxplot(post.deaths.4[19,], post.deaths.4[20,], post.deaths.4[21,], 
+        post.deaths.4[22,], post.deaths.4[23,], post.deaths.4[24,], 
+        horizontal = TRUE, las = 2,
+        main = "Model 3: Est. Posterior Deaths", 
+        names = c("Sonoma", "Stan.", "Solano", "Placer", "SLO", "Yolo"), 
+        col = c("blue", "darkblue", "brown", "red", "gold", "lightblue"))
+
+boxplot(post.deaths.4[25,], post.deaths.4[26,], post.deaths.4[27,], 
+        post.deaths.4[28,], post.deaths.4[29,], post.deaths.4[30,], 
+        horizontal = TRUE, las = 2,
+        main = "Model 3: Est. Posterior Deaths", 
+        names = c("Imp", "SCZ", "Mont", "Merced", "Humboldt", "S.Benito"), 
+        col = c("blue", "darkblue", "brown", "red", "gold", "lightblue"))
+
+boxplot(post.deaths.4[31,], post.deaths.4[32,], post.deaths.4[33,], 
+        post.deaths.4[34,], post.deaths.4[35,], post.deaths.4[36,], 
+        horizontal = TRUE, las = 2,
+        main = "Model 3: Est. Posterior Deaths", 
+        names = c("Dorado", "Napa", "Nevada", "Madera", "Shasta", "Mono"), 
+        col = c("blue", "darkblue", "brown", "red", "gold", "lightblue"))
+```
+
+```{r}
+par(mfrow = c(2,2))
+boxplot(post.deaths.3[1,], post.deaths.3[2,], post.deaths.3[3,], 
+        post.deaths.3[4,], post.deaths.3[5,], post.deaths.3[6,], 
+        main = "Model 2: Est. Posterior Deaths", horizontal = TRUE, las = 2,
+        names = c("LA", "SD", "R.side", "S.Clara", "Orange", "S.Bern"), 
+        col = c("blue", "darkblue", "brown", "red", "gold", "lightblue"))
+
+boxplot(post.deaths.3[7,], post.deaths.3[8,], post.deaths.3[9,], 
+        post.deaths.3[10,], post.deaths.3[11,], post.deaths.3[12,], 
+        horizontal = TRUE, las = 2,
+        main = "Model 2: Est. Posterior Deaths", 
+        names = c("SF", "Ala", "Sac", "S.Mateo", "C.Costa", "Kern"), 
+        col = c("blue", "darkblue", "brown", "red", "gold", "lightblue"))
+
+boxplot(post.deaths.3[13,], post.deaths.3[14,], post.deaths.3[15,], 
+        post.deaths.3[16,], post.deaths.3[17,], post.deaths.3[18,], 
+        horizontal = TRUE, las = 2,
+        main = "Model 2: Est. Posterior Deaths", 
+        names = c("Ventura", "S.Joaq", "SB", "Tulare", "Fresno", "Marin"), 
+        col = c("blue", "darkblue", "brown", "red", "gold", "lightblue"))
+
+boxplot(post.deaths.3[19,], post.deaths.3[20,], post.deaths.3[21,], 
+        post.deaths.3[22,], post.deaths.3[23,], post.deaths.3[24,], 
+        horizontal = TRUE, las = 2,
+        main = "Model 2: Est. Posterior Deaths", 
+        names = c("Sonoma", "Stan.", "Solano", "Placer", "SLO", "Yolo"), 
+        col = c("blue", "darkblue", "brown", "red", "gold", "lightblue"))
+
+boxplot(post.deaths.3[25,], post.deaths.3[26,], post.deaths.3[27,], 
+        post.deaths.3[28,], post.deaths.3[29,], post.deaths.3[30,], 
+        horizontal = TRUE, las = 2,
+        main = "Model 2: Est. Posterior Deaths", 
+        names = c("Imp", "SCZ", "Mont", "Merced", "Humboldt", "S.Benito"), 
+        col = c("blue", "darkblue", "brown", "red", "gold", "lightblue"))
+
+boxplot(post.deaths.3[31,], post.deaths.3[32,], post.deaths.3[33,], 
+        post.deaths.3[34,], post.deaths.3[35,], post.deaths.3[36,], 
+        horizontal = TRUE, las = 2,
+        main = "Model 2: Est. Posterior Deaths", 
+        names = c("Dorado", "Napa", "Nevada", "Madera", "Shasta", "Mono"), 
+        col = c("blue", "darkblue", "brown", "red", "gold", "lightblue"))
+```
+
+```{r}
+par(mfrow = c(2,2))
+boxplot(est.posterior.deaths[1,], est.posterior.deaths[2,], est.posterior.deaths[3,], 
+        est.posterior.deaths[4,], est.posterior.deaths[5,], est.posterior.deaths[6,], 
+        main = "Model 1: Est. Posterior Deaths", horizontal = TRUE, las = 2,
+        names = c("LA", "SD", "R.side", "S.Clara", "Orange", "S.Bern"), 
+        col = c("blue", "darkblue", "brown", "red", "gold", "lightblue"))
+
+boxplot(est.posterior.deaths[7,], est.posterior.deaths[8,], est.posterior.deaths[9,], 
+        est.posterior.deaths[10,], est.posterior.deaths[11,], est.posterior.deaths[12,], 
+        horizontal = TRUE, las = 2,
+        main = "Model 1: Est. Posterior Deaths", 
+        names = c("SF", "Ala", "Sac", "S.Mateo", "C.Costa", "Kern"), 
+        col = c("blue", "darkblue", "brown", "red", "gold", "lightblue"))
+
+boxplot(est.posterior.deaths[13,], est.posterior.deaths[14,], est.posterior.deaths[15,], 
+        est.posterior.deaths[16,], est.posterior.deaths[17,], est.posterior.deaths[18,], 
+        horizontal = TRUE, las = 2,
+        main = "Model 1: Est. Posterior Deaths", 
+        names = c("Ventura", "S.Joaq", "SB", "Tulare", "Fresno", "Marin"), 
+        col = c("blue", "darkblue", "brown", "red", "gold", "lightblue"))
+
+boxplot(est.posterior.deaths[19,], est.posterior.deaths[20,], est.posterior.deaths[21,], 
+        est.posterior.deaths[22,], est.posterior.deaths[23,], est.posterior.deaths[24,], 
+        horizontal = TRUE, las = 2,
+        main = "Model 1: Est. Posterior Deaths", 
+        names = c("Sonoma", "Stan.", "Solano", "Placer", "SLO", "Yolo"), 
+        col = c("blue", "darkblue", "brown", "red", "gold", "lightblue"))
+
+boxplot(est.posterior.deaths[25,], est.posterior.deaths[26,], est.posterior.deaths[27,], 
+        est.posterior.deaths[28,], est.posterior.deaths[29,], est.posterior.deaths[30,], 
+        horizontal = TRUE, las = 2,
+        main = "Model 1: Est. Posterior Deaths", 
+        names = c("Imp", "SCZ", "Mont", "Merced", "Humboldt", "S.Benito"), 
+        col = c("blue", "darkblue", "brown", "red", "gold", "lightblue"))
+
+boxplot(est.posterior.deaths[31,], est.posterior.deaths[32,], est.posterior.deaths[33,], 
+        est.posterior.deaths[34,], est.posterior.deaths[35,], est.posterior.deaths[36,], 
+        horizontal = TRUE, las = 2,
+        main = "Model 1: Est. Posterior Deaths", 
+        names = c("Dorado", "Napa", "Nevada", "Madera", "Shasta", "Mono"), 
+        col = c("blue", "darkblue", "brown", "red", "gold", "lightblue"))
 
 ```
 
