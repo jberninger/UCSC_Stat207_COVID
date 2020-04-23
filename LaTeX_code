@@ -1,0 +1,275 @@
+\documentclass[11pt,twocolumn]{asaproc}
+\usepackage{amsmath}
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{url}
+\usepackage{booktabs}
+%\usepackage{mathtime}
+
+%%UNCOMMENT following line if you have package
+\usepackage{times}
+
+\title{Stat 207 : COVID-19}
+
+\author{Jordan Berninger\thanks{University of California, Santa Cruz. Baskin School of Engineering. Department of Statistics.}}
+\begin{document}
+
+
+\maketitle
+
+\begin{abstract}
+
+The COVID-19 pandemic is one of the most globally influential events of the 21st Century and is the central focus of many epidemiological and statistical analyses. Testing for the virus is not widely available in all communities resulting in inaccurate data with inconsistencies across different municipal districts. Nevertheless, many communities predict that their hospital infrastructure will be overrun, forcing preventative measures such as social distancing and remote University instruction.
+
+In this paper, we analyze data on COVID-19 in California. For each of the 58 counties in California, our data set includes the number of deaths (denoted $y_i$), the number of cases (denoted $n_i$), and the total population in the state. This data set was collected on April 13th, 2020.
+
+In Section \ref{eda}, we visualize the data set and note the significant diversity across counties in California. In Section \ref{models} we introduce three different Bayesian models, draw inference on the death rate (deaths/cases) and estimate the number of deaths. In Section \ref{dead20percent}, we assume that 20\% of Californians become infected and apply each of our 3 models to estimate the number of deaths. In Section \ref{conc}, we compare the conclusions from our three models, note that the worst case scenario is quite dire, and suggest areas for future research.
+
+
+\begin{keywords}
+COVID-19, Hierarchial Modeling, Bayesian Inference, Rejection Sampling
+\end{keywords}
+\end{abstract}
+
+
+
+\section{Exploratory Data Analysis\label{eda}}
+
+It is common knowledge that the coastal counties of the Bay Area and Southern California have much larger populations and much greater population density than the rest of the state. In Figure \ref{map}, we see the death rate for each county as a color and note that rural Mono County on the Nevada border has a significantly higher death rate than any other county. We also note that the denser counties of Los Angeles, Santa Clara, San Mateo and Marin have the next highest death rates, while the rural counties in the far North have death rates near zero. 
+
+\begin{figure}[H]
+\centering\includegraphics[scale=.20]{covid_cali_map_2.png}
+\caption{Death Rate by County}\label{map}
+\end{figure}
+
+In Figure \ref{introhist2} we see that 40 counties report fewer than 150 cases at the time the data was collected. It is possible that the virus has not reached these areas, but it is also possible that insufficient testing has resulted in innacurate and underreported numbers. Furthermore, we note that 22 counties report 0 deaths, and therefore have a death rate of 0\%, seen in Figure \ref{introhist}.
+
+\begin{figure}[H]
+\centering\includegraphics[scale=.20]{covid_cali_cases_hist.png}
+\caption{Total Cases by County}\label{introhist2}
+\end{figure}
+
+\begin{figure}[H]
+\centering\includegraphics[scale=.20]{covid_cali_death_hist.png}
+\caption{Death Rate by County}\label{introhist}
+\end{figure}
+
+In Figures \ref{scatter} and \ref{scatter2}, we plot the number of deaths against the number of infected and fit a simple linear model. Figure \ref{scatter2} has Los Angeles removed to provide more clarity on the other counties which are all significantly smaller. In these scatter plots, the best fit line represents the average death rate - counties that are above the best fit line have above average death rates, and counties that are below have lower than average death rates. These plots indicate that there is some variability in the death rates across counties. 
+
+\begin{figure}[H]
+\centering\includegraphics[scale=.20]{covid_cali_scatterplot.png}
+\caption{Deaths vs Infected. All Counties.}\label{scatter}
+\end{figure}
+
+\begin{figure}[H]
+\centering\includegraphics[scale=.20]{covid_cali_scatter_no_la.png}
+\caption{Deaths vs Infected. All Counties Except LA.}\label{scatter2}
+\end{figure}
+
+This exploration highlight several important features of the data set. We see significant variance in the death rate of counties. Los Angeles has an anomalously high population which could make LA extremely influential in the following models. Over a third of the counties are reporting 0 deaths which could also be very influential in the following models. 
+
+\section{Models\label{models}}
+
+\subsection{Model 1: Binomial Likelihood with a Beta Prior\label{model1}}
+
+We will first fit the model where 
+
+$y_i \sim Binomial (n_i, \theta)$, 
+
+$\theta \sim Beta(1/2, 1/2)$. 
+
+This means that we are assuming that there is one $\theta$ that is applied to all of the counties in California, and this $\theta$ represents the probability that someone who is infected dies. This is a strong assumption. We also note that $\theta \sim Beta(1/2, 1/2)$ is a non-informative, uniform prior distribution and $\theta \in (0,1)$. This familiar model produces the following posterior distribution:
+
+\begin{equation} \label{eq1}
+\begin{split}
+p(\theta | \vec{y}) \sim\\
+&Beta(\sum_{i=1}^{58}y_i + 1/2, \\
+&\sum_{i=1}^{58}n_i - \sum_{i=1}^{58}y_i + 1/2).
+\end{split}
+\end{equation}
+
+Since our posterior distribution has a nice, closed form, we can directly sample $\theta$ and draw inference on the sample distribution. Our posterior sample of $\theta$ has a mean value of $0.0298$, a 95\% credible interval of $0.02775, 0.03191$ and the full posterior distribution is seen in Figure \ref{m1post}.
+
+\begin{figure}[H]
+\centering\includegraphics[scale=.20]{covid_cali_m1_post_dist.png}
+\caption{Model 1 : Posterior Distribution of \theta}\label{m1post}
+\end{figure}
+
+Now, we want to estimate the number of deaths, assuming that 20\% of the population becomes infected. We assume that precisely 20\% of the population in each counts become infected, which is a strong assumption given disparate different population densities. Nonetheless, we use our posterior sample of $\theta$, the estimated death rate to compute the estimated number of deaths in each county. It is difficult to display the distributions for each of the 58 counties, so we visualize the distribution for 24 counties. These numbers are alarming, especially for Los Angeles County, where this model has an expected value of nearly 60,000 deaths.
+
+\begin{figure}[H]
+\centering\includegraphics[scale=.20]{covid_cali_m1_box44.png}
+\caption{Model 1 : Estimated Deaths from 20\% Infection}\label{m1postd}
+\end{figure}
+
+\subsection{Model 2: Beta-Binomial Model\label{model2}}
+
+We next consider the following Beta-Binomial model where
+
+$y_i \sim Beta-Binom(n_i, \mu, \tau),$
+
+$p(\mu, \tau) = \big(\mu(1-\mu)(1+\tau)^2 \big)^{-1}$.
+
+We consider this model because it allows for more flexibility in the posterior variance than the standard Binomial implemented in Model 1. The Beta-Binomial model can correct for over or under-dispersion that can be seen in the standard Binomial model. in The first step for implementing this model is computing the joint posterior distribution of $(\mu, \tau)$. We have:
+
+\begin{equation} \label{eq2}
+\begin{split}
+p(\mu, \tau | \vec{y})  \propto\\
+&\Pi_{i=1}^{58}f(y_i | \mu, \tau)p(\mu, \tau) \\
+&\propto \Pi_{i=1}^{58} \binom{n_i}{y_i}\\
+&*\frac{Beta(y_i+\mu,n_i-y_i+\tau)}{Beta(\mu,\tau)}\\
+&*\big(\mu(1-\mu)(1+\tau)^2 \big)^{-1}
+\end{split}
+\end{equation}
+
+Now, we note that this is not a known distribution from which we can directly sample. Accordingly, we perform Rejection Sampling to get a posterior sample of $(\mu, \tau)$. To perform Rejection sampling, we first need to transform our parameters, because maximization procedures work better when the parameters to be optimized can take any real number value. Accordingly, we use the familiar transformation $\eta = logit(\mu)$ and $K = exp(\tau)$. This variable transformation means we need to include a Jacobian term in the new joint distribution. We also note that we cannot optimize this joint distribution directly, since we have large value of $y_i$ and $n_1$, a standard computer cannot compute the beta function of very large numbers. Accordingly, we optimize the log-joint-likelihood using a Laplace Approximation. The Laplace Approximation returns the posterior mean and an estimated co-variance matrix, which we then plug into a $t_{df=4}$ distribution, as our proposal distribution for Rejection Sampling. We want a proposal distribution with significant mass in the tails, which is why we choose a low degree of freedom for the proposal distribution. In Figure \ref{m2post}, the contour lines are produced by the aforementioned proposal $t_{df=4}$ distribution and the dots represent the accepted samples of $\eta$, $K$.
+
+\begin{figure}[H]
+\centering\includegraphics[scale=.20]{covid_cali_m2_rejection_2.png}
+\caption{Rejection Sampling of Model 2 Posterior Distribution (Transformed Variables)}\label{m2post}
+\end{figure}
+
+We then take the samples from the Rejection Sampling, convert them back into the original units, $\mu$ and $\tau$, with which we can sample the number of deaths. We know the expected value of a Beta-Binomial distribution is $n*\frac{\mu}{\mu+\tau}$ and we use this equation to sample from the number of deaths. We show the distribution of $\frac{\mu}{\mu+\tau}$ in Figure \ref{m2conc} and note several things - the distribution is skewed right, the mean of $0.01705$ is significantly lower than that of Model 1's $\theta$, and the 95\% credible interval of $(0.0132, 0.0231)$ is wider than that of Model 1. Accordingly, we see that Model 2 has more dispersion than Model 1, and that Model 2 will predict fewer deaths on average than Model 1. These differences are displayed quite clearly in Figure \ref{m2postd} and also in the Conclusions Section.
+
+
+\begin{figure}[H]
+\centering\includegraphics[scale=.20]{covid_cali_m2_dist.png}
+\caption{Model 2 : Posterior Distribution of \mu/(\mu+\tau)}\label{m2conc}
+\end{figure}
+
+\begin{figure}[H]
+\centering\includegraphics[scale=.20]{covid_cali_m2_box44.png}
+\caption{Model 2 : Estimated Deaths from 20\% Infection}\label{m2postd}
+\end{figure}
+
+\subsection{Model 3 : Hierarchical Model\label{model3}}
+
+Model 1 and Model 2 both assume a global mortality rate across all counties in California. One benefit to this approach is that these models use data from across the state to draw inference in every county, in other words, the large sample size from Los Angeles has a large impact on inferences in the smaller counties which do not have many cases. One downside to this approach is that Models 1 and 2 treat all the counties equally, which may be misguided since California counties are very diverse. We now introduce Model 3, a hierarchical model, which fits different mortality rates for each county, and each mortality rate is assumed to come from a shared, uninformative prior distribution. Model 3 has the following structure:
+
+$y_i \sim Binom(n_i, \theta_i),$
+
+$\theta_i \sim Beta(\mu\tau, (1-\mu)\tau),$
+
+$p(\mu, \tau) = \big(\mu(1-\mu)(1+\tau)^2 \big)^{-1}$.
+
+We note that this is the same uninformative prior from Model 2. Our first step for this model is to determine the joint posterior distribution $p(\vec{\theta}, \mu, \tau | \vec{y})$. We have:
+
+\begin{equation} \label{eq3}
+\begin{split}
+p(\vec{\theta}, \mu, \tau | \vec{y})  \propto\\
+&p(\mu, \tau)\Pi_{i=1}^{58}p(\theta_i | \mu, \tau) \\
+&*\Pi_{i=1}^{58}p(y_i|\theta_i,\mu,\tau)\\
+&\propto \big(\mu(1-\mu)(1+\tau)^2 \big)^{-1} \\
+&*\Pi_{i=1}^{58}\Big(\frac{\Gamma(\mu+\tau)}{\Gamma(\mu)\Gamma(\tau)} \\
+&*\theta_i^{\mu-1}(1-\theta)^{\tau-1}\Big) \\
+&*\Pi_{i=1}^{58}\theta_i^{y_i}(1-\theta)^{n_i-y_1}
+\end{split}
+\end{equation}
+
+Now that we have the joint posterior distribution, we need to break it up to determine the posterior distribution $p(\mu, \tau|\vec{y})$ and also the posterior distribution  $p(\theta | \mu, \tau, \vec{y})$. Then we take a sample from $p(\mu, \tau | \vec{y})$ and then plug these pairs of values into our $p(\theta | \mu, \tau, \vec{y})$ distribution. From there, we can sample the number of deaths in each county.
+
+Given $(\mu,\tau)$, we know that that the posterior distribution of each $\theta_i$ is an independent beta distribution with the joint posterior density given by:
+
+\begin{equation} \label{eq4}
+\begin{split}
+p(\vec{\theta} | \mu, \tau, \vec{y})  =\\
+&\Pi_{i=1}^{58}\Big(\frac{\Gamma(\mu+\tau+n_i)}{\Gamma(\mu+y_i)\Gamma(\tau+n_i-y_i)}\\
+&*\theta_i^{\mu+y_1-1}(1-\theta)^{\tau+n_i-y_i-1}\Big) \\
+\end{split}
+\end{equation}
+
+We can now combine equations 3 and 4 to determine the joint posterior distribution for $(\mu, \tau)$, which is:
+
+\begin{equation} \label{eq5}
+\begin{split}
+p(\mu, \tau | \vec{\theta}, \vec{y})  =\\
+&\big(\mu(1-\mu)(1+\tau)^2 \big)^{-1}\\
+&*\Pi_{i=1}^{58}\Big(\frac{\Gamma(\mu+\tau)}{\Gamma(\mu)\Gamma(\tau)}\\
+&*\frac{\Gamma(\mu+y_i)\Gamma(\tau+n_i-y_i)}{\Gamma(\mu+\tau+n_i)}\Big)
+\end{split}
+\end{equation}
+
+We note that we cannot directly sample from this distribution. Accordingly, we follow a similar Rejection Sampling procedure as we did for Model 3 - we make the same transformation of $(\mu, \tau)$ to $(\eta, K)$, including a Jacobian term in the new joint posterior distribution. Again, we find the posterior mode and an approximate co-variance matrix through a Laplace approximation, feeding the posterior mean and co-variance matrix to a 2-dimensional $t_{df=4}$ distribution. Our accepted samples of $(\eta, K)$ are seen as the dots in Figure \ref{m3post}. We note that there is significantly less dispersion in the accepted samples of Model 3 than those of model 2 when we compare Figure \ref{m3post} to Figure \ref{m2post}.
+
+\begin{figure}[H]
+\centering\includegraphics[scale=.20]{covid_cali_m3_rejection_2.png}
+\caption{Rejection Sampling of Model 3 Posterior Distribution (Transformed Variables)}\label{m3post}
+\end{figure}
+
+After we convert $(\eta, K)$ back to $(\mu, \tau)$ and can use these to sample $\theta_i$ since $\theta_i \sim Beta(\mu\tau, (1-\mu)\tau)$. This sample of $\theta$ is seen in Figure \ref{m3conc} - we note its rough symmetry, sharp mode, mean value of $0.0300$ and it 95\% credible interval of $(0.00924, 0.06488)$. This 95\% credible interval is substantially wider than those of the previous model. This makes sense, because our hierarchical model posits a different $\theta$ for each county, and from exploratory data analysis, we saw substantial variance in the death rates across counties.
+
+\begin{figure}[H]
+\centering\includegraphics[scale=.20]{covid_cali_m3_theta.png}
+\caption{Model 3 : Posterior Distribution of \theta}\label{m3conc}
+\end{figure}
+
+Now that we have our sample of $\theta$, we can sample the number of deaths in each county, again assuming a uniform infection rate of 20\%. The distribution of deaths seen in Figure \ref{m3postd} shows significant variance within each county, and many more outlying data points than the previous models.
+
+\begin{figure}[H]
+\centering\includegraphics[scale=.20]{covid_cali_m3_box44.png}
+\caption{Model 3 : Posterior est. Current Death Count}\label{m3postd}
+\end{figure}
+
+\section{Estimating Probability of +200K Deaths\label{dead20percent}}
+
+One of our goals for this analysis is to predict the posterior likelihood, for each model, that more than 200,000 lives are lost in California, assuming that 20\% of the population is infected, uniformly across all counties. This is a naive assumption because counties in California have diverse population densities, poverty levels, hospital infrastructures, age distributions and other demographics. Nonetheless, we visualize the distribution of number of deaths in California from each model's posterior sample in Figure \ref{final}. The figure clearly shows significant discrepancy in the three models.
+
+\begin{figure}[H]
+\centering\includegraphics[scale=.20]{covid_cali_final_deaths.png}
+\caption{Deaths from 20 Percent of Population Infected}\label{final}
+\end{figure}
+
+Table 1 highlights the drastically different conclusions across models. It is somewhat surprising to see similar models produce such varying conclusions.
+
+\begin{table}[]
+\caption{}
+\label{Posterior Samples Statewide Deaths}
+\begin{tabular}{@{}lll@{}}
+\toprule
+Model & +200K Dead \% & Avg. Dead \\ \midrule
+1     & 100\%         & 235154    \\
+2     & 0.523\%       & 134433    \\
+3     & 57.9\%        & 236727    \\ \bottomrule
+\end{tabular}
+\end{table}
+
+
+\section{Conclusions\label{conc}}
+
+In this analysis, we fit a Binomial model, a Beta-Binomial Model, and a Hierarchical Model all with uninformative priors to estimate the death rate from COVID-19 and we used these estimates to draw posterior samples on the number of fatalities in each county. The three models investigated produced similar mean death rates, with different levels of variance. 
+
+Model 1 produces the highest death estimates, it is likely swayed by the outsize influence on Los Angeles County, which accounts for over 25\% of California's population. Since model 1 assumes the same death rate across all counties, the high death rate in Los Angeles increases the number of estimated deaths in all counties, even the sparse counties with low infection rates. When we assume that 20\% of the population is infected in each county, and then apply the statewide estimated death rate, we are positing that the high infection rate from Los Angeles permeates all corners of the state. This also accounts for the low variance in Model 1's posterior $\theta$ distribution. 
+
+Model 2, a Beta-Binomial model, is known to account for over / under-dispersion that can be seen in the variance of a binomial model. In our analysis, we saw substantially more variance in the estimates from Model 2, and we also see a much lower statewide death rate. It appears that the larger counties with higher observed death rates have less influence on the other counties in Model 2.
+
+Model 3 has the largest variance in the estimates deaths out of the models we investigated. Through exploratory data analysis, we saw substantial variance in the death rates across counties. In Model 3, we are positing that each county's death rate, $\theta_i$ comes from the same distribution, which means that this distribution for $\theta$ is quiet diffuse, resulting in significant posterior sample variance.
+
+When we consider the litmus test of 200K deaths, the models appear quite different. From this angle, Model 1 and Model 2 are in complete disagreement. Taking this into consideration, it seems reasonable that Model 3 is the best, because it has the largest estimated variance and bridges the gap between Models 1 and 2 in some sense. Regardless of the model that seems best, it appears as if California needs to prepare for significant loss of life. Only time will tell the full scale of this
+
+The code for this analysis can be found in my Github repository at \url{https://github.com/jberninger/UCSC_Stat207_COVID/}
+
+
+\section{Further Research}
+
+This analysis sparked many ideas for future research. It would make sense to break the counties into groups based off population density or poverty level. It would also make sense to discard any counties that have insufficient testing, since this poor data can dilute the accurate data that we have. This is an overarching concern of all COVID-19 studies - not enough testing has been done to date, and the testing has to be consistent and well-distributed. Poor data results in inaccurate inference. When accurate data comes in, that will provide the infrastructure for more accurate and insightful analyses.
+
+%Note:BibTeX also works
+
+\begin{references}
+\itemsep=0pt
+{\footnotesize
+
+\item
+Gelman, Andrew, et al. ``Bayesian Data Analysis.'' 3rd ed., CRC Press, Taylor & Francis Group, an Informa Business, 2014.
+
+\item
+
+Albert, Jim. ``Bayesian Computation with R.'' Springer New York, 2009.
+
+}
+\end{references}
+
+
+\end{document}
+
+
