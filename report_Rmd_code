@@ -1,0 +1,425 @@
+---
+title: "Stat 207 Exam 1 Take Home"
+author: "Jordan Berninger"
+date: "4/21/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(readr)
+library(tidyverse)
+library(ggmap)
+library(ggplot2)
+library(ggmap)
+library(maps)
+library(mapdata)
+library(janitor)
+library(LearnBayes)
+
+setwd("~/Desktop/Stat 207/")
+covid <- read_csv("covid.csv") %>% mutate(County = tolower(County)) %>% clean_names()
+covid1 <- covid %>% mutate(infected = floor(0.20*population))
+covid2 <- data.frame(y = covid$deaths, n = covid$total_cases)
+covid3 <- covid1 %>% mutate(est.infected.20 = ceiling(0.20*population))
+
+```
+
+## R Markdown
+
+```{r}
+states <- map_data("state")
+cali <- subset(states, region == "california")
+counties <- map_data("county")
+ca_county <- subset(counties, region == "california") %>% inner_join(covid, by = c("subregion" = "county")) %>%
+  mutate(death.rate = 100*round(deaths/population, 10))
+
+ditch_the_axes <- theme(
+  axis.text = element_blank(),
+  axis.line = element_blank(),
+  axis.ticks = element_blank(),
+  panel.border = element_blank(),
+  panel.grid = element_blank(),
+  axis.title = element_blank()
+  )
+
+ca_base <- ggplot(data = cali, mapping = aes(x = long, y = lat, group = group)) + 
+  coord_fixed(1.3) + 
+  geom_polygon(color = "black", fill = "gray")
+
+ca_base + 
+      geom_polygon(data = ca_county, aes(fill =100*death.rate), color = "white") +
+      geom_polygon(color = "black", fill = NA) +
+      theme_bw() +
+      labs(fill = "Deaths / Infected (%)") +
+      ditch_the_axes
+```
+
+```{r}
+par(mfrow = c(2,1))
+
+ggplot(data = covid1, aes(x=infected, y=deaths, color=population)) + geom_point() + 
+  geom_smooth(method="lm") + ggtitle("All California Counties")
+
+ggplot(data = covid1[2:58,], aes(x=infected, y=deaths, color=population)) + geom_point() + 
+  geom_smooth(method="lm") + ggtitle("Los Angeles Removed")
+``` 
+
+
+```{r}
+# posterior sampling
+# since this is closed form, we can do direct sampling
+set.seed(112358)
+n = 1000
+post.theta <- rbeta(n = n, shape1 = sum(covid$deaths) + 0.5, 
+                    shape2 = sum(covid$total_cases) - sum(covid$deaths) + 0.5)
+
+hist(post.theta)
+plot(density(post.theta), main = "Model 1 : Theta Posterior Distribution", col = "blue") # make pretty
+
+est.posterior.deaths <- matrix(NA, nrow = nrow(covid), ncol = n)
+row.names(est.posterior.deaths) <- covid$county
+
+for(i in 1:nrow(covid)){
+  for(j in 1:n){
+    est.posterior.deaths[i,j] = ceiling(covid2$n[i] * post.theta[j])
+  }
+}
+
+```
+
+
+```{r}
+par(mfrow = c(2,1))
+hist(est.posterior.deaths[1,], main = "Distribution of Posterior Death Count for Los Angeles County")
+hist(est.posterior.deaths[26,], main = "Distribution of Posterior Death Count for Santa Cruz County")
+```
+
+```{r}
+# quantile summary of posterior death count
+est.posterior.deaths %>% apply(MARGIN = 1, FUN = quantile, probs = c(0.10, 0.25, 0.50, 0.75, 0.90)) %>% t()
+# this should be plotted
+```
+
+```{r}
+#boxplot(est.posterior.deaths[1,], est.posterior.deaths[2,], horizontal = TRUE, main = "Posterior Deaths", 
+#        names = c("LA", "SD"), col = c("blue", "darkblue"))
+# including LA fucks up the scale
+boxplot(est.posterior.deaths[2,], est.posterior.deaths[3,], est.posterior.deaths[4,], horizontal = TRUE, main = "Posterior Deaths", names = c("SD", "Riverside", "Santa Clara"), col = c("blue", "darkblue", "red"))
+```
+
+
+Now we want to do rejection sampling. Steps:
+- posterior density and log posterior density - this is the proposal distribution
+- find a proposal density (univaraite t, low degrees of freedom for fat tails, center determined by laplace / optim?)
+- find a suitable constant, d, to blanket the proposal distribution
+- sample theta, sample uniform, compute the ratio
+
+```{r}
+# from the Albet book Chapter 5 page 79
+
+betabinexch0=function(theta, data) # this computes the log posterior density of the beta-binomial exchangeable model
+   {
+   eta=theta[,1] # this is mu in our model
+   K=theta[,2] # this is tau in our model
+   y=data[,1] 
+   n=data[,2]
+   N=length(y)
+   val=0*K;
+   for (i in 1:N)
+      val=val+lbeta(K*eta+y[i],K*(1-eta)+n[i]-y[i])
+   val=val-N*lbeta(K*eta,K*(1-eta))
+   val=val-2*log(1+K)-log(eta)-log(1-eta)
+   return(val)
+}
+
+betabinexch=function(theta, data){
+    eta = exp(theta[1])/(1 + exp(theta[1]))
+    K = exp(theta[2])
+    y = data[, 1]
+    n = data[, 2]
+    N = length(y)
+ 
+    logf=function(y,n,K,eta)
+       lbeta(K * eta + y, K * (1 - eta) + n - y)-lbeta(K * eta, K * (1 - eta))
+
+    val=sum(logf(y,n,K,eta))
+
+    val = val + theta[2] - 2 * log(1 + exp(theta[2]))
+    return(val)
+}
+
+betabinT=function(theta,datapar){
+   data=datapar$data
+   tpar=datapar$par
+   d=betabinexch(theta,data)-dmt(theta,mean=c(tpar$m),
+     S=tpar$var,df=tpar$df,log=TRUE)
+   return(d)
+}
+
+```
+
+
+```{r}
+
+fit <- laplace(betabinexch,array(c(-7,6),c(1,2)), data = covid2)
+tpar=list(m=fit$mode,var=2*fit$var,df=4)
+dataparams=list(data=covid2,par=tpar)
+
+start=array(c(-10,10),c(1,2))
+#laplace(betabinT,theta = start, mode = 10, dataparams, method = "Brent", lower = -1000, upper= 100)
+
+start1 <- c(0.25, 0.5)# these need to be initialized?
+
+fit1 <- optim(start, betabinT, control = list(fnscale = -1), hessian = TRUE, datapar = dataparams)
+
+d_max <- betabinT(theta = fit1$par, data = dataparams) # this is the value of d that I think we want
+
+tpar1=list(m=fit1$par,var=2*solve(-1*fit1$hessian), df=4) 
+# convert the hessian to a covariance, stack overflow says covar is asymptotically -hessian^-1
+
+rejectsampling=function(logf,tpar,dmax,n,data){
+     theta=rmt(n,mean=c(tpar$m),S=tpar$var,df=tpar$df)
+     for(i in 1:n){
+     lf[i]=logf(theta[i,],data) 
+     }# this was lf before
+     lg=dmt(theta,mean=c(tpar$m),S=tpar$var,df=tpar$df,log=TRUE)
+     prob=exp(lf-lg-dmax)
+     return(theta[runif(n)<prob,])
+}
+
+n <- 10000
+
+lf <- rep(0,n)
+theta3 <- rejectsampling(betabinexch, tpar1, dmax = d_max, n, covid2)
+mycontour(betabinexch,c(-4,-3,3,8), covid2, main = "Model 2 : Parameter Rejection Sampling")# change these values as well add axes labels
+points(theta3[,1],theta3[,2])
+# maybe convert to the original units?
+```
+
+```{r}
+library(rmutil)
+library(boot)
+a <- inv.logit(theta3[,1])
+b <- log(theta3[,2])
+
+post.deaths.3 <- matrix(NA, nrow=nrow(covid2), ncol = nrow(theta3))
+rownames(post.deaths.3) <- covid$county
+
+for(i in 1:nrow(post.deaths.3)){
+  for(j in 1:ncol(post.deaths.3)){
+    post.deaths.3[i,j] <- floor(covid2$n[i]*(a[j]/(a[j]+b[j])))
+  }
+}
+
+plot(density(a/(a+b)), main = "Model 2 : Posterior Distribution mu/(mu+tau)",
+     col = "red") # this is the distribution of "theta"
+
+post.theta.3 <- a/(a+b)
+
+apply(post.deaths.3, MARGIN = 1, FUN = quantile, probs = c(0.1,0.25,0.5,0.75,0.9)) %>% t()
+covid2$n[1]*(a/(a+b)) %>% mean() # expected value
+
+covid2$n[1]*(a*b*(a+b+covid2$n[1]))/((a+b)*(a+b)*(a+b)+1) %>% mean() # variance
+
+```
+
+
+```{r}
+{
+  offset = 10 # enough to make logit(mu) positive
+  optimObj = optim(fit$mode, betabinexch, control = list(fnscale = -1), hessian = TRUE, data = covid2)
+  mode = optimObj$par
+  curvature = optimObj$hessian
+  logDetCurvature = as.numeric(determinant(curvature)$modulus)
+  log.logitmu.times.logpost = function(theta){log(theta[1]+offset) + betabinexch(theta, covid2)}
+  logitmuOptimObj = optim(fit$mode, log.logitmu.times.logpost,
+                         control = list(fnscale = -1), hessian = TRUE)
+  logitmuMode = logitmuOptimObj$par
+  thata1Curvature = logitmuOptimObj$hessian
+  logitmuLogDetCurvature = as.numeric(determinant(thata1Curvature)$modulus)
+  logPostExplogitmu = 1/2 * logDetCurvature - 1/2 * logitmuLogDetCurvature +
+    logitmuOptimObj$value - optimObj$value
+  postExplogitmu = exp(logPostExplogitmu)-offset
+  
+  log.logtau.times.logpost = function(theta){log(theta[2]) + betabinexch(theta, covid2)}
+  logtauOptimObj = optim(fit$mode, log.logtau.times.logpost,
+                         control = list(fnscale = -1), hessian = TRUE)
+  logtauMode = logtauOptimObj$par
+  thata2Curvature = logtauOptimObj$hessian
+  logtauLogDetCurvature = as.numeric(determinant(thata2Curvature)$modulus)
+  logPostExplogtau = 1/2 * logDetCurvature - 1/2 * logtauLogDetCurvature +
+    logtauOptimObj$value - optimObj$value
+  postExplogtau = exp(logPostExplogtau)
+}
+```
+
+
+## Problem 4 model
+
+```{r}
+library(boot)
+log_post_mu_tau <- function(theta, data){
+  mu = theta[1]
+  tau = theta[2]
+  y = data[, 1]
+  n = data[, 2]
+  N = length(y)
+  return(-log(mu*(1-mu)*(1+tau)^2) + sum(lbeta(mu*tau + y, tau*(1-mu) + n - y) - lbeta(mu*tau,tau*(1-mu))))
+}
+
+betabinexch5=function(theta, data) # this computes the log posterior density of the beta-binomial exchangeable model
+   {
+   eta = exp(theta[1])/(1 + exp(theta[1]))
+   K = exp(theta[2])
+   y=data[,1] 
+   n=data[,2]
+   N=length(y)
+   val=0*K;
+   for (i in 1:N)
+      val=val+lbeta(K*eta+y[i],K*(1-eta)+n[i]-y[i])
+   val=val-N*lbeta(K*eta,K*(1-eta))
+   val=val-2*log(1+K)-log(eta)-log(1-eta)
+   return(val)
+}
+
+betabinexch4=function(theta, data){
+    eta = exp(theta[1])/(1 + exp(theta[1]))
+    K = exp(theta[2])
+    mu = theta[1]
+    tau = theta[2]
+    y = data[, 1]
+    n = data[, 2]
+    N = length(y)
+ 
+    logf=function(y,n,K,eta)
+       lbeta(K * eta + y, K * (1 - eta) + n - y)-lbeta(K * eta, K * (1 - eta))
+
+    val= -log(eta*(1-eta)*(1+K)^2) + sum(logf(y,n,K,eta))
+
+    val = val + theta[2] - 2 * log(1 + exp(theta[2]))
+    return(val)
+}
+
+#betabinexch4(j, covid2)
+# ok this seems to work
+# now need to do rejection sampling to get a sample of mu and tau
+# follow the above model
+
+fit4 <- laplace(betabinexch5, array(c(-7,6),c(1,2)), data = covid2)
+tpar4=list(m=fit4$mode,var=2*fit4$var,df=4)
+dataparams4=list(data=covid2,par=tpar4)
+
+start=array(c(-10,10),c(1,2))
+#laplace(betabinT,theta = start, mode = 10, dataparams, method = "Brent", lower = -1000, upper= 100)
+
+fit5 <- optim(start, betabinT, control = list(fnscale = -1), hessian = TRUE, datapar = dataparams4)
+
+d_max4 <- betabinT(theta = fit5$par, data = dataparams4) # this is the value of d that I think we want
+
+tpar4=list(m=fit5$par,var=2*solve(-1*fit5$hessian), df=4) 
+# convert the hessian to a covariance, stack overflow says covar is asymptotically -hessian^-1
+
+rejectsampling=function(logf,tpar,dmax,n,data){
+     theta=rmt(n,mean=c(tpar$m),S=tpar$var,df=tpar$df)
+     for(i in 1:n){
+     lf[i]=logf(theta[i,],data) 
+     }# this was lf before
+     lg=dmt(theta,mean=c(tpar$m),S=tpar$var,df=tpar$df,log=TRUE)
+     prob=exp(lf-lg-dmax)
+     return(theta[runif(n)<prob,])
+}
+
+n <- 10000
+
+theta4 <- rejectsampling(betabinexch5, tpar4, dmax = d_max4, n, covid2)
+mycontour(betabinexch5,c(-4,-3,3,8), covid2, main = "Model 3 : Parameter Rejection Sampling")# change these values as well add axes labels
+points(theta4[,1],theta4[,2])
+# centered much more
+# very good
+# now sample the thetas given this sample of 
+
+post.theta.4 <- matrix(NA, nrow = nrow(covid2), ncol = nrow(theta4))
+
+mu.4 <- inv.logit(theta4[,1])
+tau.4 <- log(theta4[,2])
+
+for(i in 1:nrow(covid2)){
+  for(j in 1:length(tau.4)){
+    post.theta.4[i,j] <- rbeta(n = 1, shape1 = inv.logit(theta4[j,1])*log(theta4[j,2]) + covid2$y[i] - 1,
+                               shape2 = log(theta4[j,2])*(1-inv.logit(theta4[j,1])) + covid2$n[i] - covid2$y[i] - 1)
+  }
+}
+
+for(i in 1:nrow(covid2)){
+  for(j in 1:length(tau.4)){
+    post.theta.4[i,j] <- rbeta(n = 1, shape1 = mu.4[j]*tau.4[j] + covid2$y[i] - 1,
+                               shape2 = tau.4[j]*(1-mu.4[j]) + covid2$n[i] - covid2$y[i] - 1)
+  }
+}
+post.theta.4[is.nan(post.theta.4)] <- 0
+# was getting NAN values when y is = 0
+post.theta.4.dist <- apply(post.theta.4, MARGIN = 1, FUN = quantile, probs = c(0.10, 0.25, 0.50, 0.75, 0.90)) %>% t()
+rownames(post.theta.4.dist) <- covid1$county
+
+
+post.theta.4 <- rbeta(n=nrow(theta4),shape1=inv.logit(theta4[,1])*exp(theta4[,2]), 
+                      shape2 = exp(theta4[,2])*(1-exp(theta4[,1])))
+plot(density(post.theta.4), main = "Model 3 : Theta Posterior Distribution", col = "orange") # this density plot is important
+
+post.deaths.4 <- matrix(NA, nrow = nrow(covid2), ncol = length(post.theta.4))
+
+for(i in 1:nrow(covid2)){
+  for(j in 1:ncol(post.deaths.4)){
+    post.deaths.4[i,j] <- rbinom(n=1, size=covid2$n[i], prob=post.theta.4[j])
+  }
+}
+rownames(post.deaths.4) <- covid$county
+apply(post.deaths.4, MARGIN = 1, FUN = quantile, probs = c(0.1,0.25,0.5,0.75,0.9)) %>% t() %>% View()
+```
+
+# Problem 5
+- Assume that 20% of people are infected in each county
+
+```{r}
+
+est.dead.4 <- matrix(NA, nrow=nrow(covid3), ncol=length(post.theta.4))
+rownames(est.dead.4) <- covid1$county
+
+est.dead.3 <- matrix(NA, nrow=nrow(covid3), ncol=length(post.theta.3))
+rownames(est.dead.3) <- covid1$county
+
+est.dead.2 <- matrix(NA, nrow=nrow(covid3), ncol=length(post.theta))
+rownames(est.dead.2) <- covid1$county
+
+for(i in 1:nrow(est.dead.4)){
+  for(j in 1:ncol(est.dead.4)){
+    est.dead.4[i,j] = covid3$est.infected.20[i]*post.theta.4[j]
+  }
+}
+
+
+for(i in 1:nrow(est.dead.3)){
+  for(j in 1:ncol(est.dead.3)){
+    est.dead.3[i,j] = covid3$est.infected.20[i]*post.theta.3[j]
+  }
+}
+
+
+for(i in 1:nrow(est.dead.2)){
+  for(j in 1:ncol(est.dead.2)){
+    est.dead.2[i,j] = covid3$est.infected.20[i]*post.theta[j]
+  }
+}
+
+
+par(mfrow = c(3,1))
+plot(density(apply(est.dead.2, MARGIN = 2, FUN = sum)), main = "Model 1 : Deaths from 20% Infected", col = "blue")
+abline(v = 20000, col = "pink")
+plot(density(apply(est.dead.3, MARGIN = 2, FUN = sum)), main = "Model 2 : Deaths from 20% Infected", col = "red")
+abline(v = 20000, col = "pink")
+plot(density(apply(est.dead.4, MARGIN = 2, FUN = sum)), main = "Model 3 : Deaths from 20% Infected", col = "orange")
+abline(v = 20000, col = "pink")
+
+```
+
